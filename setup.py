@@ -16,5 +16,10 @@ setuptools.setup(
     author_email="tkokan@gmail.com",
     packages=setuptools.find_packages(),
     install_requires=install_requires,
-    zip_safe=False
+    zip_safe=False,
+    entry_points={
+        'console_scripts': [
+            'cactus = cactus.main:main',
+        ],
+    }
 )

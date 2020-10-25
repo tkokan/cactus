@@ -29,7 +29,6 @@ def format_sql(file_name: str, check: bool = False) -> Optional[FormatAttempt]:
 
         try:
             needs_formatting = not api.process_file(file_name)
-            print(needs_formatting)
         except FileSkipped:
             skipped = True
         return FormatAttempt(needs_formatting, skipped, supported_encoding=True)
@@ -95,7 +94,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--files", nargs="*", help="One or more SQL source files that need to be formatted."
+        "files", nargs="*", help="One or more SQL source files that need to be formatted."
     )
 
     return parser
