@@ -1,7 +1,10 @@
 import argparse
 import sys
-from typing import Optional, Sequence, Dict, Any
-from . import api, sections
+import os
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set
+from . import api
+from .exceptions import FileSkipped, UnsupportedEncoding
+from warnings import warn
 
 
 class FormatAttempt:
@@ -11,7 +14,7 @@ class FormatAttempt:
         self.supported_encoding = supported_encoding
 
 
-def format_sql(file_name: str, config: Config, check: bool = False, **kwargs: Any) -> Optional[FormatAttempt]:
+def format_sql(file_name: str, check: bool = False) -> Optional[FormatAttempt]:
 
     needs_formatting: bool = False
     skipped: bool = False
@@ -19,23 +22,22 @@ def format_sql(file_name: str, config: Config, check: bool = False, **kwargs: An
     try:
         if check:
             try:
-                needs_formatting = not api.check_file(file_name, config=config, **kwargs)
+                needs_formatting = not api.process_file(file_name, check_only=True)
             except FileSkipped:
                 skipped = True
             return FormatAttempt(needs_formatting, skipped, supported_encoding=True)
 
         try:
-            needs_formatting = not api.format_file(file_name, config=config, **kwargs)
+            needs_formatting = not api.process_file(file_name)
+            print(needs_formatting)
         except FileSkipped:
             skipped = True
-        return FormatAttempt(incorrectly_sorted, skipped, supported_encoding=True)
+        return FormatAttempt(needs_formatting, skipped, supported_encoding=True)
     except (OSError, ValueError) as error:
         warn(f"Unable to parse file {file_name} due to {error}")
         return None
     except UnsupportedEncoding:
-        if config.verbose:
-            warn(f"Encoding not supported for {file_name}")
-        return SortAttempt(incorrectly_sorted, skipped, supported_encoding=False)
+        return FormatAttempt(needs_formatting, skipped, supported_encoding=False)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -45,8 +47,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         " "
         "https://github.com/tkokan/cactus"
     )
-
-    inline_args_group = parser.add_mutually_exclusive_group()
     
     parser.add_argument(
         "-c",
@@ -95,14 +95,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "files", nargs="*", help="One or more SQL source files that need to be formatted."
+        "--files", nargs="*", help="One or more SQL source files that need to be formatted."
     )
 
     return parser
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
-    argv = sys.argv[1:] if argv is None else list(argv)
+    argv = sys.argv[1:] if argv is None else argv
 
     parser = _build_arg_parser()
     arguments = {key: value for key, value in vars(parser.parse_args(argv)).items() if value}
@@ -110,9 +110,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     return arguments
 
 
-def iter_source_code(
-    paths: Iterable[str], config: Config, skipped: List[str], broken: List[str]
-) -> Iterator[str]:
+def iter_source_code(paths: Iterable[str], skipped: List[str], broken: List[str]) -> Iterator[str]:
     """Iterate over all Python source files defined in paths."""
     visited_dirs: Set[Path] = set()
 
@@ -157,18 +155,17 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     skipped: List[str] = []
     broken: List[str] = []
 
-    file_names = iter_source_code(file_names, config, skipped, broken)
+    file_names = iter_source_code(file_names, skipped, broken)
 
     num_skipped = 0
     num_broken = 0
     num_invalid_encoding = 0
+    wrong_formatted_files = False
+    all_attempt_broken = False
+    no_valid_encodings = False
 
     attempt_iterator = (
-        format_sql(
-            file_name,
-            config=config,
-            check=check
-        )
+        format_sql(file_name, check)
         for file_name in file_names
     )
 
@@ -180,7 +177,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         needs_formatting = format_attempt.needs_formatting
         if arguments.get("check", False) and needs_formatting:
             wrong_formatted_files = True
-        if sort_attempt.skipped:
+        if format_attempt.skipped:
             num_skipped += 1
 
         if not format_attempt.supported_encoding:

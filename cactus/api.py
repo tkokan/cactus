@@ -1,53 +1,26 @@
 from typing import Optional, TextIO, Union, cast
+from pathlib import Path
 from .formatter import format_lines
+import os
 
-def check_file(
-    filename: Union[str, Path],
-    show_diff: Union[bool, TextIO] = False,
-    config: Config = DEFAULT_CONFIG,
-    file_path: Optional[Path] = None,
-    disregard_skip: bool = True,
-    extension: Optional[str] = None,
-    **config_kwargs,
-) -> bool:
+def process_file(filename: Union[str, Path], check_only: bool = False) -> bool:
     
-    with io.File.read(filename) as source_file:
-        changed, _ = format_lines(source_file.readlines())
-    
+    with open(filename) as source_file:
+        source_file = open(filename)
+        source_lines = source_file.readlines()
+        source_file_path = Path(os.path.realpath(source_file.name))
+
+    changed, new_lines = format_lines(source_lines)
+
+    if check_only or not changed:
         return changed
 
-def format_file(
-    filename: Union[str, Path],
-    extension: Optional[str] = None,
-    config: Config = DEFAULT_CONFIG,
-    file_path: Optional[Path] = None,
-    disregard_skip: bool = True,
-    ask_to_apply: bool = False,
-    show_diff: Union[bool, TextIO] = False,
-    **config_kwargs
-) -> bool:
-    
-    with io.File.read(filename) as source_file:
-        actual_file_path = file_path or source_file.path
-        config = _config(path=actual_file_path, config=config, **config_kwargs)
-        changed: bool = False
-        tmp_file = source_file.path.with_suffix(source_file.path.suffix + ".cactus")
+    tmp_file_path = source_file_path.with_suffix(source_file_path.suffix + ".cactus")
 
-        try:
-            with tmp_file.open("w", encoding=source_file.encoding, newline="") as output_stream:
-                shutil.copymode(filename, tmp_file)
-                
-                changed, new_lines = format_lines(source_file.readlines())
+    with open(tmp_file_path, "w") as tmp_file:
+        tmp_file.writelines(new_lines)
 
-            if changed:
-                source_file.stream.close()
-                tmp_file.writelines(new_lines)
-                tmp_file.replace(source_file.path)
-                print(f"Fixing {source_file.path}")
-        finally:
-                try:
-                    tmp_file.unlink()
-                except FileNotFoundError:
-                    pass
+    tmp_file_path.replace(source_file_path)
+    print(f"Fixing {source_file_path}")
 
-        return changed
+    return True
