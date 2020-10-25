@@ -1,0 +1,7 @@
+-   id: cactus
+    name: cactus
+    entry: cactus
+    require_serial: true
+    language: python
+    types: [sql]
+
