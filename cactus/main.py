@@ -1,6 +1,41 @@
 import argparse
 import sys
 from typing import Optional, Sequence, Dict, Any
+from . import api, sections
+
+
+class FormatAttempt:
+    def __init__(self, needs_formatting: bool, skipped: bool, supported_encoding: bool) -> None:
+        self.needs_formatting = needs_formatting
+        self.skipped = skipped
+        self.supported_encoding = supported_encoding
+
+
+def format_sql(file_name: str, config: Config, check: bool = False, **kwargs: Any) -> Optional[FormatAttempt]:
+
+    needs_formatting: bool = False
+    skipped: bool = False
+    
+    try:
+        if check:
+            try:
+                needs_formatting = not api.check_file(file_name, config=config, **kwargs)
+            except FileSkipped:
+                skipped = True
+            return FormatAttempt(needs_formatting, skipped, supported_encoding=True)
+
+        try:
+            needs_formatting = not api.format_file(file_name, config=config, **kwargs)
+        except FileSkipped:
+            skipped = True
+        return FormatAttempt(incorrectly_sorted, skipped, supported_encoding=True)
+    except (OSError, ValueError) as error:
+        warn(f"Unable to parse file {file_name} due to {error}")
+        return None
+    except UnsupportedEncoding:
+        if config.verbose:
+            warn(f"Encoding not supported for {file_name}")
+        return SortAttempt(incorrectly_sorted, skipped, supported_encoding=False)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -75,6 +110,42 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     return arguments
 
 
+def iter_source_code(
+    paths: Iterable[str], config: Config, skipped: List[str], broken: List[str]
+) -> Iterator[str]:
+    """Iterate over all Python source files defined in paths."""
+    visited_dirs: Set[Path] = set()
+
+    for path in paths:
+        if os.path.isdir(path):
+            for dirpath, dirnames, filenames in os.walk(path, topdown=True, followlinks=True):
+                base_path = Path(dirpath)
+                for dirname in list(dirnames):
+                    full_path = base_path / dirname
+                    resolved_path = full_path.resolve()
+                    if config.is_skipped(full_path):
+                        skipped.append(dirname)
+                        dirnames.remove(dirname)
+                    else:
+                        if resolved_path in visited_dirs:
+                            if not config.quiet:
+                                warn(f"Likely recursive symlink detected to {resolved_path}")
+                            dirnames.remove(dirname)
+                    visited_dirs.add(resolved_path)
+
+                for filename in filenames:
+                    filepath = os.path.join(dirpath, filename)
+                    if config.is_supported_filetype(filepath):
+                        if config.is_skipped(Path(filepath)):
+                            skipped.append(filename)
+                        else:
+                            yield filepath
+        elif not os.path.exists(path):
+            broken.append(path)
+        else:
+            yield path
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
     arguments = parse_args(argv)
     
@@ -93,13 +164,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     num_invalid_encoding = 0
 
     attempt_iterator = (
-        sort_imports(
+        format_sql(
             file_name,
             config=config,
-            check=check,
-            ask_to_apply=ask_to_apply,
-            show_diff=show_diff,
-            write_to_stdout=write_to_stdout,
+            check=check
         )
         for file_name in file_names
     )
@@ -107,18 +175,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     # If any files passed in are missing considered as error, should be removed
     is_no_attempt = True
     any_encoding_valid = False
-    for sort_attempt in attempt_iterator:
-        if not sort_attempt:
-            continue  # pragma: no cover - shouldn't happen, satisfies type constraint
-        incorrectly_sorted = sort_attempt.incorrectly_sorted
-        if arguments.get("check", False) and incorrectly_sorted:
-            wrong_sorted_files = True
-        if sort_attempt.skipped:
-            num_skipped += (
-                1  # pragma: no cover - shouldn't happen, due to skip in iter_source_code
-            )
 
-        if not sort_attempt.supported_encoding:
+    for format_attempt in attempt_iterator:
+        needs_formatting = format_attempt.needs_formatting
+        if arguments.get("check", False) and needs_formatting:
+            wrong_formatted_files = True
+        if sort_attempt.skipped:
+            num_skipped += 1
+
+        if not format_attempt.supported_encoding:
             num_invalid_encoding += 1
         else:
             any_encoding_valid = True
@@ -126,7 +191,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         is_no_attempt = False
 
     num_skipped += len(skipped)
-    if num_skipped and not arguments.get("quiet", False):
+    if num_skipped:
         if config.verbose:
             for was_skipped in skipped:
                 warn(
@@ -136,7 +201,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         print(f"Skipped {num_skipped} files")
 
     num_broken += len(broken)
-    if num_broken and not arguments.get("quite", False):
+    if num_broken:
         if config.verbose:
             for was_broken in broken:
                 warn(f"{was_broken} was broken path, make sure it exists correctly")
@@ -147,12 +212,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if num_invalid_encoding > 0 and not any_encoding_valid:
         no_valid_encodings = True
 
-    if wrong_sorted_files:
+    if wrong_formatted_files:
         sys.exit(1)
 
     if all_attempt_broken:
         sys.exit(1)
 
+    if no_valid_encodings:
+        print("No valid encodings.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
