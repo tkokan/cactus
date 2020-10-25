@@ -13,7 +13,7 @@ setuptools.setup(
     description="SQL formatter",
     url="https://github.com/tkokan/cactus",
     author="Tonci Kokan",
-    author_email="tkokan@gmail.com,
+    author_email="tkokan@gmail.com",
     packages=setuptools.find_packages(),
     install_requires=install_requires,
     zip_safe=False
